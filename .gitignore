@@ -1,0 +1,5 @@
+node_modules/
+trackanything.html
+trackanything-demo.html
+*.log
+.DS_Store

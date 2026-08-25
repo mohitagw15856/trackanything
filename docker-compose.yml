@@ -1,0 +1,23 @@
+services:
+  trackanything:
+    build: .
+    volumes:
+      - ./data:/data
+    # Runs one pass and exits. Pair it with the host's cron, or swap this for a
+    # loop -- deliberately not a daemon, because a price tracker that only runs
+    # when you ask it is one less thing to keep alive.
+    command: ["check", "--notify", "ntfy:${NTFY_TOPIC:-trackanything}", "--quiet"]
+
+  # `docker compose --profile cron up -d` for an always-on checker instead.
+  cron:
+    profiles: ["cron"]
+    build: .
+    volumes:
+      - ./data:/data
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          node /app/bin/trackanything.mjs check --notify "ntfy:${NTFY_TOPIC:-trackanything}" --quiet
+          sleep "${INTERVAL:-21600}"
+        done

@@ -1,0 +1,16 @@
+{
+  "name": "trackanything",
+  "version": "0.1.0",
+  "description": "Watch the price of anything on any page. Self-hosted, no account, no subscription — and on most shops it needs no selector at all.",
+  "type": "module",
+  "bin": { "trackanything": "bin/trackanything.mjs", "ta": "bin/trackanything.mjs" },
+  "engines": { "node": ">=18" },
+  "files": ["bin", "src", "README.md", "LICENSE"],
+  "scripts": { "test": "node --test test/*.test.mjs" },
+  "keywords": ["price-tracker", "price-history", "keepa", "self-hosted", "selfhosted", "web-scraping", "monitoring", "ntfy", "zero-dependency", "cli"],
+  "author": "Mohit (mohitagw15856)",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/mohitagw15856/trackanything.git" },
+  "homepage": "https://github.com/mohitagw15856/trackanything#readme",
+  "bugs": "https://github.com/mohitagw15856/trackanything/issues"
+}
