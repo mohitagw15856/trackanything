@@ -1,6 +1,6 @@
 {
   "name": "trackanything",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Watch the price of anything on any page. Self-hosted, no account, no subscription — and on most shops it needs no selector at all.",
   "type": "module",
   "bin": { "trackanything": "bin/trackanything.mjs", "ta": "bin/trackanything.mjs" },

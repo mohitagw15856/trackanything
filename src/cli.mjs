@@ -45,6 +45,9 @@ Add options
   --target <number>        the price you would actually buy at
   --on <change|drop|target|stock|never>   when to notify (default: change)
   --every <duration>       minimum gap between checks, e.g. 6h, 30m, 1d
+  --cookie <string>        send your own Cookie header, for a site you have an
+                           account on (stored in plain text in the data file)
+  --header <"Name: val">   send an extra request header (repeatable)
 
 Check options
   --notify <type:target>   repeatable. ntfy:topic, discord:URL, slack:URL,
@@ -52,6 +55,14 @@ Check options
   --only <id|name>         one watch
   --force                  ignore --every and paused
   --quiet                  only print things that changed
+
+When a site blocks it
+  A page that answers with an anti-bot wall is reported as "blocked", not as a
+  missing price, and that watch is then left alone for a while (longer each time)
+  so the site is not hammered. trackanything does not solve challenges, rotate
+  proxies or pretend to be a browser it is not. If you have a genuine account on
+  the site, --cookie lets you read it as yourself; otherwise a block is the site's
+  answer, and the right thing is to respect it.
 
 Everything is stored in ~/.trackanything/watches.json. Nothing is uploaded, and
 there is no account to make.
@@ -63,6 +74,16 @@ export function parseDuration(spec) {
   if (!m) throw new Error(`durations look like 30m, 6h, 2d (got "${spec}")`);
   const mult = { s: 1, m: 60, h: 3600, d: 86400, w: 604800 }[m[2].toLowerCase()];
   return Math.round(Number(m[1]) * mult);
+}
+
+// `--header "Name: value"`, stored on the watch and sent on every check. The
+// split is on the first colon only, so a value with its own colon survives.
+function addHeader(o, spec) {
+  const at = String(spec).indexOf(':');
+  if (at === -1) throw new Error(`headers look like "Name: value" (got "${spec}")`);
+  const name = spec.slice(0, at).trim();
+  if (!name) throw new Error(`a header needs a name (got "${spec}")`);
+  (o.headers ||= {})[name] = spec.slice(at + 1).trim();
 }
 
 export function parseArgs(argv) {
@@ -80,6 +101,8 @@ export function parseArgs(argv) {
     else if (a === '--on') o.notifyOn = next();
     else if (a === '--every') o.every = parseDuration(next());
     else if (a === '--notify') o.notify.push(parseChannel(next()));
+    else if (a === '--header') addHeader(o, next());
+    else if (a === '--cookie') (o.headers ||= {}).Cookie = next();
     else if (a === '--only') o.only = next();
     else if (a === '--force') o.force = true;
     else if (a === '--quiet') o.quiet = true;
@@ -118,7 +141,14 @@ export async function run(argv, { fetchImpl = fetch, now = () => new Date() } = 
       if (reading.error) {
         db.watches.pop();
         let msg = `could not read a value from that page: ${reading.error}`;
-        if (!o.selector && !o.regex && !o.jsonPath) {
+        if (reading.blocked) {
+          msg +=
+            '\n\nThe site is serving an anti-bot wall rather than the page, and\n' +
+            'trackanything will not try to defeat that. If you have a genuine account\n' +
+            'there, read it as yourself:\n' +
+            '  trackanything add <url> --cookie "<your Cookie header from the browser>"\n' +
+            'Otherwise this is the shop’s decision, and the right move is to leave it be.';
+        } else if (!o.selector && !o.regex && !o.jsonPath) {
           msg +=
             '\n\nTry: trackanything test <url> --selector ".price"\n' +
             'to find a selector that works before adding it.';
@@ -176,7 +206,10 @@ export async function run(argv, { fetchImpl = fetch, now = () => new Date() } = 
         }
         if (o.quiet && !r.changed && !r.reading.error) continue;
         if (r.reading.error) {
-          out += `  ${red('!')} ${pad(r.watch.name || r.watch.url, 40)} ${dim(r.reading.error)}\n`;
+          // A block is a caution, not a breakage: the tool is working, the site
+          // is saying no. Mark it differently so it does not read as a bug.
+          const mark = r.reading.blocked ? yellow('⊘') : red('!');
+          out += `  ${mark} ${pad(r.watch.name || r.watch.url, 40)} ${dim(r.reading.error)}\n`;
         } else if (r.changed) {
           const down = r.previous != null && r.reading.value < r.previous;
           out += `  ${down ? green('↓') : yellow('↑')} ${pad(r.watch.name || r.watch.url, 40)} `;
@@ -217,7 +250,12 @@ export async function run(argv, { fetchImpl = fetch, now = () => new Date() } = 
         if (s && s.changes > 0) out += dim(`  low ${money(s.low)} · high ${money(s.high)}`);
         if (w.target != null) out += dim(`  target ${money(w.target)}`);
         if (w.paused) out += dim('  paused');
-        if (w.lastError) out += red(`  ${w.lastError}`);
+        if (w.blockedUntil) {
+          out += yellow(`  ${w.lastError || 'blocked'}`);
+          out += dim(`  retrying ${w.blockedUntil.slice(0, 16).replace('T', ' ')}`);
+        } else if (w.lastError) {
+          out += red(`  ${w.lastError}`);
+        }
         out += '\n';
       }
       return { stdout: out + '\n' };

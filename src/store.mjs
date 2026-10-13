@@ -81,10 +81,13 @@ export function addWatch(db, watch) {
     target: watch.target ?? null,
     notifyOn: watch.notifyOn || 'change',
     every: watch.every || null,
+    headers: watch.headers && Object.keys(watch.headers).length ? watch.headers : null,
     paused: false,
     created: watch.created || new Date().toISOString(),
     history: [],
     lastError: null,
+    blockStreak: 0,
+    blockedUntil: null,
   };
   db.watches.push(record);
   return record;
@@ -98,6 +101,18 @@ export function addWatch(db, watch) {
 export function record(watch, reading, now = new Date().toISOString()) {
   const last = watch.history[watch.history.length - 1];
   watch.lastError = reading.error || null;
+
+  // Politeness backoff. Each consecutive block pushes the next check further out
+  // so a site that is refusing us is not hammered; anything else — a good read or
+  // an ordinary error like a stale selector — ends the streak and clears it.
+  if (reading.blocked) {
+    watch.blockStreak = (watch.blockStreak || 0) + 1;
+    watch.blockedUntil = new Date(Date.parse(now) + backoffMs(watch.blockStreak)).toISOString();
+  } else {
+    watch.blockStreak = 0;
+    watch.blockedUntil = null;
+  }
+
   if (reading.error) return { changed: false, previous: last?.value ?? null };
 
   // Normalise before comparing: a reading with no availability field arrives as
@@ -118,6 +133,15 @@ export function record(watch, reading, now = new Date().toISOString()) {
     checks: 1,
   });
   return { changed: Boolean(last), previous: last?.value ?? null, first: !last };
+}
+
+// Exponential: 1h, 2h, 4h … capped at a day. The cap matters — a block often
+// lifts on its own, and a watch that gave up forever would miss it, so a blocked
+// site is still retried at least once a day.
+const BACKOFF_BASE_MS = 3_600_000;
+const BACKOFF_CAP_MS = 86_400_000;
+export function backoffMs(streak) {
+  return Math.min(BACKOFF_BASE_MS * 2 ** Math.max(0, streak - 1), BACKOFF_CAP_MS);
 }
 
 export function currentValue(watch) {
