@@ -54,7 +54,9 @@ function card(w) {
     w.target != null && cur != null && cur <= w.target ? '<span class="flag good">under your target</span>' : '',
     last?.available === false ? '<span class="flag">out of stock</span>' : '',
     w.paused ? '<span class="flag">paused</span>' : '',
-    w.lastError ? `<span class="flag bad">${esc(w.lastError)}</span>` : '',
+    w.lastError
+      ? `<span class="flag ${w.blockedUntil ? 'warn' : 'bad'}">${esc(w.lastError)}</span>`
+      : '',
   ].join('');
 
   const change =
@@ -98,8 +100,8 @@ export function renderReport(db, { now = new Date().toISOString().slice(0, 16).r
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>trackanything — ${watches.length} watches</title>
 <style>
-:root{--bg:#fbfaf9;--panel:#fff;--ink:#1a1a1a;--muted:#6b6b6b;--line:#e6e3df;--accent:#3b6ea5;--good:#2f855a;--bad:#c0392b;--radius:14px}
-@media (prefers-color-scheme:dark){:root{--bg:#141414;--panel:#1c1c1c;--ink:#f0eeec;--muted:#9a9a9a;--line:#2c2c2c;--accent:#7aa7dd;--good:#4ade80;--bad:#ff6b5e}}
+:root{--bg:#fbfaf9;--panel:#fff;--ink:#1a1a1a;--muted:#6b6b6b;--line:#e6e3df;--accent:#3b6ea5;--good:#2f855a;--bad:#c0392b;--warn:#b7791f;--radius:14px}
+@media (prefers-color-scheme:dark){:root{--bg:#141414;--panel:#1c1c1c;--ink:#f0eeec;--muted:#9a9a9a;--line:#2c2c2c;--accent:#7aa7dd;--good:#4ade80;--bad:#ff6b5e;--warn:#f6c667}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 ui-sans-serif,-apple-system,"Segoe UI",Inter,sans-serif;padding:32px 20px 72px}
 .wrap{max-width:1080px;margin:0 auto}
@@ -117,6 +119,7 @@ h2 a:hover{text-decoration:underline}
 .flag{display:inline-block;font-size:11px;padding:1px 8px;border-radius:99px;border:1px solid var(--line);color:var(--muted);margin:0 4px 4px 0}
 .flag.good{color:var(--good);border-color:var(--good)}
 .flag.bad{color:var(--bad);border-color:var(--bad)}
+.flag.warn{color:var(--warn);border-color:var(--warn)}
 .spark{width:100%;height:auto;display:block;margin:10px 0 4px}
 dl{display:flex;gap:18px;margin:6px 0 0;flex-wrap:wrap}
 dt{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}

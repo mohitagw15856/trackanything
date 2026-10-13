@@ -170,7 +170,7 @@ So failures are recorded as data rather than thrown:
 
 ```
   ! Larkin Standing Desk    selector "#product .now" matched nothing with a number in it
-  ! Aurora Headphones       HTTP 403
+  ⊘ Aurora Headphones       blocked — the site refused the request (HTTP 403)
 ```
 
 The history is untouched, the other watches still run, and `list` shows the error
@@ -181,6 +181,45 @@ serve a challenge page to anything that looks scripted and a challenge page has 
 price on it. That is the extent of it: no proxy rotation, no headless browser, no
 CAPTCHA solving. If a shop genuinely does not want to be read, this will not read
 it, and that is the correct outcome.
+
+## When a shop blocks you
+
+Some shops answer a script with an anti-bot wall instead of the page — a `403`, or
+a `200` that is really a "Just a moment…" interstitial with no price on it. Because
+a wall is not the same failure as a broken selector, it is handled differently, and
+the handling is built around *respecting* the block, not getting past it.
+
+**It is named for what it is.** A wall is reported as `blocked` (marked `⊘`, in
+amber), not as a missing price, so you are not sent off writing a selector for a
+page that was never served to you.
+
+**It backs off instead of knocking harder.** The first block holds that watch for
+an hour; the next for two, then four, doubling up to a daily cap. A site that is
+refusing you is left alone — and retried once a day in case the block lifts —
+rather than hit on every run. `list` shows when it will next try:
+
+```
+  a1b2c3d4  Aurora Headphones   £249.99   blocked — HTTP 403   retrying 2026-10-13 14:00
+```
+
+**You can read a site as yourself.** If you have a genuine account somewhere, copy
+your own `Cookie` header out of your browser and hand it over — now trackanything
+reads the page logged in as you, which is you using your own access, not a tool
+pretending to be someone it isn't:
+
+```sh
+trackanything add https://shop.example/members-only \
+  --cookie "session=…; cart=…" \
+  --header "Referer: https://shop.example/"
+```
+
+Those headers are stored in plain text in `watches.json`, so treat that file the
+way you would treat anything else holding a session cookie.
+
+What it will not do, by design, is solve a CAPTCHA, rotate proxies or spoof a
+browser it is not. The moment a price tracker becomes an evasion tool it stops
+being something you can point at honestly — and a block you cannot read as yourself
+is the shop's answer, which is allowed to be no.
 
 ## Everything else
 

@@ -6,8 +6,8 @@ import path from 'node:path';
 
 import { parseAmount, detectCurrency, extract, titleOf, fromStructuredData, fromMeta, fromSelector, fromRegex, fromJsonPath } from '../src/extract/value.mjs';
 import { select, textOf, decodeEntities, jsonLd, metaTags } from '../src/extract/html.mjs';
-import { record, stats, addWatch, findWatch, newId } from '../src/store.mjs';
-import { checkOne, checkAll, shouldNotify } from '../src/check.mjs';
+import { record, stats, addWatch, findWatch, newId, backoffMs } from '../src/store.mjs';
+import { checkOne, checkAll, shouldNotify, isBlockStatus, challengeReason } from '../src/check.mjs';
 import { headline, parseChannel, notify } from '../src/notify/index.mjs';
 import { renderReport } from '../src/report.mjs';
 import { seedDemo } from '../src/demo.mjs';
@@ -194,10 +194,29 @@ test('a 404 is an error on the reading, not an exception', async () => {
   assert.match(r.error, /HTTP 404/);
 });
 
-test('a challenge page explains that it needs a selector', async () => {
+test('a challenge page is reported as a block, not a missing selector', async () => {
   const r = await checkOne({ url: 'https://demo.local/blocked' }, { fetchImpl: fixtureFetch() });
-  assert.match(r.error, /no price found/);
-  assert.match(r.error, /--selector/);
+  assert.equal(r.blocked, true);
+  assert.match(r.error, /blocked/);
+  assert.match(r.error, /anti-bot|challenge/);
+  assert.doesNotMatch(r.error, /--selector/);
+});
+
+test('a hard refusal status is a block whatever the body contains', async () => {
+  const r = await checkOne(
+    { url: 'https://demo.local/headphones' },
+    { fetchImpl: fixtureFetch({}, { 'https://demo.local/headphones': 403 }) }
+  );
+  assert.equal(r.blocked, true);
+  assert.match(r.error, /blocked/);
+  assert.match(r.error, /403/);
+});
+
+test('block detection does not fire on an ordinary product page', async () => {
+  assert.equal(challengeReason(PAGES['https://demo.local/headphones']()), null);
+  assert.equal(isBlockStatus(200), false);
+  assert.equal(isBlockStatus(403), true);
+  assert.equal(isBlockStatus(429), true);
 });
 
 test('a selector that stops matching says which selector', async () => {
@@ -375,8 +394,23 @@ test('add stores a watch and reads it once immediately', async () => {
 test('add refuses a page it cannot read, rather than storing a broken watch', async () => {
   isolate();
   await assert.rejects(
-    () => run(['add', 'https://demo.local/blocked'], { fetchImpl: fixtureFetch() }),
+    () => run(['add', 'https://demo.local/desk'], { fetchImpl: fixtureFetch() }),
     /--selector/
+  );
+  const list = await run(['list'], { fetchImpl: fixtureFetch() });
+  assert.match(list.stdout, /Nothing watched yet/);
+});
+
+test('add tells you a page is blocked, and does not suggest a selector', async () => {
+  isolate();
+  await assert.rejects(
+    () => run(['add', 'https://demo.local/blocked'], { fetchImpl: fixtureFetch() }),
+    (err) => {
+      assert.match(err.message, /blocked|anti-bot/);
+      assert.match(err.message, /--cookie/);
+      assert.doesNotMatch(err.message, /trackanything test <url> --selector/);
+      return true;
+    }
   );
   const list = await run(['list'], { fetchImpl: fixtureFetch() });
   assert.match(list.stdout, /Nothing watched yet/);
@@ -406,6 +440,87 @@ test('test does not save anything', async () => {
   assert.match(stdout, /Nothing was saved/);
   const list = await run(['list'], { fetchImpl: fixtureFetch() });
   assert.match(list.stdout, /Nothing watched yet/);
+});
+
+// --- blocking: detect, report, back off, bring your own session --------------
+
+test('backoff grows per consecutive block and is capped at a day', () => {
+  assert.equal(backoffMs(1), 3_600_000);
+  assert.equal(backoffMs(2), 7_200_000);
+  assert.equal(backoffMs(3), 14_400_000);
+  assert.equal(backoffMs(100), 86_400_000);
+});
+
+test('a block sets a retry time; a good read clears it', () => {
+  const watch = addWatch({ version: 1, watches: [] }, { url: 'https://demo.local/x' });
+  record(watch, { blocked: true, error: 'blocked — nope' }, '2026-01-01T00:00:00.000Z');
+  assert.equal(watch.blockStreak, 1);
+  assert.equal(watch.blockedUntil, '2026-01-01T01:00:00.000Z');
+  record(watch, { blocked: true, error: 'blocked — nope' }, '2026-01-01T01:00:00.000Z');
+  assert.equal(watch.blockStreak, 2);
+  assert.equal(watch.blockedUntil, '2026-01-01T03:00:00.000Z'); // +2h
+  record(watch, { value: 10 }, '2026-01-01T03:00:00.000Z');
+  assert.equal(watch.blockStreak, 0);
+  assert.equal(watch.blockedUntil, null);
+});
+
+test('an ordinary (non-block) error does not start a backoff', () => {
+  const watch = addWatch({ version: 1, watches: [] }, { url: 'https://demo.local/x' });
+  record(watch, { error: 'selector ".gone" matched nothing' }, '2026-01-01T00:00:00.000Z');
+  assert.equal(watch.blockStreak, 0);
+  assert.equal(watch.blockedUntil, null);
+});
+
+test('a blocked watch is left alone until its backoff expires, but --force tries it', async () => {
+  isolate();
+  await run(['add', 'https://demo.local/headphones'], { fetchImpl: fixtureFetch() });
+  // The site starts blocking. A forced check hits it and records the block.
+  const blocking = fixtureFetch({}, { 'https://demo.local/headphones': 403 });
+  const blocked = await run(['check', '--force'], { fetchImpl: blocking });
+  assert.match(blocked.stdout, /blocked/);
+
+  // A normal check now skips it rather than knocking again.
+  const skipped = await run(['check'], { fetchImpl: fixtureFetch() });
+  assert.match(skipped.stdout, /0 checked/);
+
+  // --force overrides the backoff; the site is readable again, which clears it.
+  const forced = await run(['check', '--force'], { fetchImpl: fixtureFetch() });
+  assert.match(forced.stdout, /1 checked/);
+  const list = await run(['list'], { fetchImpl: fixtureFetch() });
+  assert.doesNotMatch(list.stdout, /blocked/);
+});
+
+test('list shows a blocked watch as backing off, with a retry time', async () => {
+  isolate();
+  await run(['add', 'https://demo.local/headphones'], { fetchImpl: fixtureFetch() });
+  await run(['check', '--force'], { fetchImpl: fixtureFetch({}, { 'https://demo.local/headphones': 403 }) });
+  const list = await run(['list'], { fetchImpl: fixtureFetch() });
+  assert.match(list.stdout, /blocked/);
+  assert.match(list.stdout, /retrying/);
+});
+
+test('--cookie and --header are sent on every check, and stored on the watch', async () => {
+  isolate();
+  let seen = null;
+  const spy = async (url, init) => {
+    seen = init.headers;
+    return { ok: true, status: 200, text: async () => PAGES['https://demo.local/headphones']() };
+  };
+  await run(
+    ['add', 'https://demo.local/headphones', '--cookie', 'session=abc123', '--header', 'X-From: me'],
+    { fetchImpl: spy }
+  );
+  assert.equal(seen.Cookie, 'session=abc123');
+  assert.equal(seen['X-From'], 'me');
+  // And they persist, so the next check sends them too.
+  const list = await run(['list', '--json'], { fetchImpl: fixtureFetch() });
+  const stored = JSON.parse(list.stdout)[0];
+  assert.equal(stored.headers.Cookie, 'session=abc123');
+  assert.equal(stored.headers['X-From'], 'me');
+});
+
+test('a header with no colon is rejected with a helpful message', () => {
+  assert.throws(() => parseArgs(['add', 'url', '--header', 'nope']), /Name: value/);
 });
 
 test('watches are found by id, name or fragment', async () => {

@@ -66,14 +66,19 @@ export const PAGES = {
 <body><h1>Checking your browser</h1><p>Please enable JavaScript.</p></body></html>`,
 };
 
-/** A `fetch` that serves the fixtures above. Never touches the network. */
-export function fixtureFetch(overrides = {}) {
+/**
+ * A `fetch` that serves the fixtures above. Never touches the network.
+ * `statuses` maps a URL to a status code, so a test can make a known page come
+ * back as a 403 to exercise block handling.
+ */
+export function fixtureFetch(overrides = {}, statuses = {}) {
   return async (url) => {
     const key = String(url).split('?')[0];
     const page = PAGES[key];
     if (!page) {
       return { ok: false, status: 404, text: async () => 'not found' };
     }
-    return { ok: true, status: 200, text: async () => page(overrides[key] || {}) };
+    const status = statuses[key] ?? 200;
+    return { ok: status >= 200 && status < 300, status, text: async () => page(overrides[key] || {}) };
   };
 }
